@@ -6,87 +6,179 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Sendme is a Rust CLI tool for sending files and directories over the internet using the [iroh](https://crates.io/crates/iroh) networking library. It provides P2P file transfer with NAT hole punching, blake3 verified streaming, and resumable downloads.
 
+**This is a fork** that adds a Tauri desktop application with a modern Vue + shadcn/ui frontend.
+
+## Package Manager
+
+**Use Bun instead of npm/pnpm** for all JavaScript/TypeScript operations:
+- `bun install` instead of `npm install` or `pnpm install`
+- `bun run <script>` instead of `npm run <script>` or `pnpm run <script>`
+- `bunx <package>` instead of `npx <package>`
+
 ## Development Commands
 
-### Building
-- `cargo build` - Build the project
-- `cargo build --release` - Build optimized release binary
+### Rust Workspace (CLI + Lib + App Backend)
 
-### Testing
+- `cargo build` - Build all workspace members
+- `cargo build -p sendme-lib` - Build only the library
+- `cargo build -p sendme` - Build only the CLI
+- `cargo build -p app` - Build only the Tauri app backend
+- `cargo build --release` - Build optimized release binaries
 - `cargo test` - Run all tests
 - `cargo test --test cli` - Run CLI integration tests specifically
-- Tests are located in `tests/cli.rs` and use the `duct` crate for subprocess testing
-
-### Linting and Formatting
 - `cargo fmt --all -- --check` - Check code formatting
 - `cargo clippy --locked --workspace --all-targets --all-features` - Run Clippy lints
 - `cargo fmt` - Format code
 
-### Other
-- `cargo run -- --help` - Show CLI usage
-- `cargo install --path .` - Install locally
+### Tauri Desktop App (`app/`)
+
+- `cd app && bun run tauri dev` - Start development server with hot reload
+- `cd app && bun run build` - Build frontend only (TypeScript check + Vite build)
+- `cd app && bun run tauri build` - Build complete desktop app
+
+## Workspace Structure
+
+This is a Cargo workspace with three members:
+
+```
+iroh-sendme/
+├── lib/          # sendme-lib crate - core library
+├── cli/          # sendme CLI - original command-line interface
+└── app/          # Tauri desktop application
+    ├── src/          # Vue frontend
+    ├── src-tauri/    # Rust backend (Tauri commands)
+    └── package.json  # Frontend dependencies
+```
 
 ## Architecture
 
-### Core Structure
+### Library (`sendme-lib`)
 
-The entire application is contained in `src/main.rs` (a single-binary CLI). Key architectural components:
+The core library (`lib/`) contains all transfer logic:
 
-#### Commands
-Two main subcommands defined in the `Commands` enum:
-- **Send** (`sendme send <path>`): Hosts a file/directory for transfer
-- **Receive** (`sendme receive <ticket>`): Downloads data using a ticket
+- **`lib.rs`**: Public API exports
+- **`send.rs`**: Send/host functionality - creates iroh endpoint, imports files, serves data
+- **`receive.rs`**: Receive/download functionality - connects to sender, downloads, exports files
+- **`import.rs`**: File/directory import into iroh-blobs store (parallelized)
+- **`export.rs`**: Export from iroh-blobs store to filesystem
+- **`progress.rs`**: Progress event types and channels for real-time updates
+- **`types.rs`**: Common types (`AddrInfoOptions`, `CommonConfig`, `Format`, etc.)
 
-#### Send Flow (`send` function)
-1. Creates/loads a secret key (from `IROH_SECRET` env var or generates one)
-2. Builds an iroh `Endpoint` with relay and discovery configuration
-3. Creates a temporary `.sendme-send-*` directory for blob storage
-4. Imports the file/directory into an iroh-blobs `FsStore` via `import()`
-   - Uses `WalkDir` to traverse directories
-   - Parallelizes import using `num_cpus` workers with `futures_buffered`
-   - Creates a `Collection` containing all file hashes
-5. Creates and starts a `BlobsProtocol` provider with progress events
-6. Generates a `BlobTicket` containing endpoint address and collection hash
-7. Waits for connections, serves data via iroh protocol router
-8. On shutdown, cleans up temp directory
+#### Send Flow (`send_with_progress`)
+1. Creates/loads secret key from `IROH_SECRET` env var or generates new one
+2. Builds iroh `Endpoint` with relay mode and optional DNS discovery
+3. Creates temp `.sendme-send-*` directory for blob storage
+4. Imports file/directory into `FsStore` (parallel, uses `num_cpus` workers)
+5. Creates `BlobsProtocol` provider with progress event streaming
+6. Generates `BlobTicket` (endpoint address + collection hash)
+7. Spawns router keep-alive task with `std::future::pending()` to stay alive
+8. Returns ticket for sharing
 
-#### Receive Flow (`receive` function)
-1. Parses the ticket to get endpoint address and data hash
-2. Creates an iroh `Endpoint` for connecting
-3. Creates temporary `.sendme-recv-*` directory for blob storage
-4. Loads or downloads the collection:
-   - Checks local store for existing data via `local()`
-   - If incomplete: connects to sender, downloads via `execute_get()`
-   - Progress shown via multi-progress bars (`indicatif` crate)
-5. Exports the collection to current directory via `export()`
+#### Receive Flow (`receive_with_progress`)
+1. Parses ticket to extract endpoint address and collection hash
+2. Creates iroh `Endpoint` for connecting
+3. Creates temp `.sendme-recv-*` directory for blob storage
+4. Downloads collection via `execute_get()` with progress tracking
+5. Exports to current directory (or specified output directory)
 6. Cleans up temp directory
 
-#### Key Data Structures
-- `Collection`: Represents a set of files (hash + name pairs)
-- `BlobTicket`: Encodes endpoint address + hash for sharing
-- `Store`/`FsStore`: iroh-blobs storage backend for content-addressed data
-- `Endpoint`: iroh networking endpoint with hole-punching and relay support
+#### Progress Events
+- **`ImportProgress`**: Started/FileStarted/FileProgress/FileCompleted/Completed
+- **`ExportProgress`**: Started/FileStarted/FileProgress/FileCompleted/Completed
+- **`DownloadProgress`**: Connecting/GettingSizes/Downloading/Completed
+- **`ConnectionStatus`**: ClientConnected/ConnectionClosed/RequestStarted/RequestProgress/RequestCompleted
 
-#### Progress Reporting
-Uses `indicatif` `MultiProgress` for concurrent progress bars:
-- Import/export progress per file
-- Overall operation progress
-- Download progress with throughput display
-- Send-side connection/request progress via provider events
+### CLI (`sendme`)
 
-#### Path Handling
-- `canonicalized_path_to_string()`: Converts paths to platform-agnostic strings
-- Validates path components to prevent directory traversal
+The original CLI (`cli/src/main.rs`) is a thin wrapper around `sendme-lib`:
+- Uses `clap` derive macros for argument parsing
+- Delegates to `sendme_lib::send` and `sendme_lib::receive`
+- Uses `indicatif` for multi-progress bars in terminal
+
+### Tauri Desktop App
+
+The desktop app (`app/`) has two parts:
+
+#### Frontend (`app/src/`)
+- **Vue 3** with Composition API (`<script setup>`)
+- **shadcn/ui** components built on **reka-ui** (Radix Vue)
+- **Tailwind CSS v4** for styling
+- **TypeScript** with `vue-tsc` checking
+
+Key files:
+- **`App.vue`**: Main UI with Send/Receive tabs and transfers list
+- **`lib/commands.ts`**: Type-safe wrappers for Tauri commands
+- **`components/ui/`**: shadcn/ui components (Button, Input, Tabs, Popover, Progress, etc.)
+
+#### Backend (`app/src-tauri/src/`)
+- **`lib.rs`**: Tauri commands that wrap `sendme-lib` functions
+- Uses `tokio::sync::RwLock<HashMap>` for transfer state management
+- Emits progress events to frontend via `app.emit("progress", update)`
+- Registered plugins: `tauri_plugin_shell`, `tauri_plugin_dialog`
+
+Tauri Commands:
+- **`send_file`**: Spawns send task, returns ticket string
+- **`receive_file`**: Spawns receive task, returns result JSON
+- **`cancel_transfer`**: Sends abort signal via oneshot channel
+- **`get_transfers`**: Returns list of all transfers
+- **`get_transfer_status`**: Returns status string for specific transfer
+
+## Key Data Structures
+
+### Library Types
+- **`Collection`**: Set of files (hash + name pairs) representing a directory tree
+- **`BlobTicket`**: Encodes endpoint address + hash for sharing (base32 string)
+- **`Store`/`FsStore`**: Content-addressed storage backend for blake3-verified data
+- **`Endpoint`**: iroh networking endpoint with NAT hole-punching and relay support
+
+### Frontend Types
+```typescript
+interface Transfer {
+  id: string;
+  transfer_type: "send" | "receive";
+  path: string;
+  status: string;  // "initializing" | "serving" | "downloading" | "completed" | "error" | "cancelled"
+  created_at: number;  // Unix timestamp
+}
+
+interface ProgressUpdate {
+  event_type: "import" | "export" | "download" | "connection";
+  data: ProgressData & { transfer_id: string };
+}
+```
+
+## Important Implementation Details
+
+### Router Keep-Alive
+Critical: The sender's router must stay alive to serve incoming connections. This is done by:
+```rust
+tokio::spawn(async move {
+    let _router = router;
+    std::future::pending::<()>().await;  // Runs forever
+});
+```
+Do NOT replace this with a sleep loop or the router will drop.
+
+### Progress Channels
+- Use `tokio::sync::mpsc::channel(32)` for progress event streaming
+- Sender spawns task to consume events and emit to frontend
+- Frontend uses `listen("progress", callback)` to receive events
+
+### Abort Handling
+- Each transfer has `Option<tokio::sync::oneshot::Sender<()>>` for abort
+- Cancel sends `()` through channel, task listens via `abort_rx.await`
+- Transfer state tracks abort sender to enable cancellation
+
+### Path Handling
 - All temp directories use `.sendme-*` prefix
+- `canonicalized_path_to_string()`: Platform-agnostic path conversion
+- Validates path components to prevent directory traversal
 
-### Dependencies
-- `iroh` / `iroh-blobs`: Core networking and content-addressed storage
-- `clap`: CLI argument parsing with derive macros
-- `tokio`: Async runtime
-- `indicatif`: Progress bars
-- `walkdir`: Directory traversal
-- `futures-buffered`: Buffered concurrent futures processing
-- `crossterm` (optional): Clipboard support and keyboard handling
+### Ticket Types
+- **`Id`**: Smallest ticket, requires DNS discovery
+- **`Relay`**: Uses relay server only
+- **`Addresses`**: Direct addresses only
+- **`RelayAndAddresses`**: Both relay and direct (default, most reliable)
 
-### MSRV
-Minimum Supported Rust Version: **1.81** (must also update in `.github/workflows/ci.yml` if changed)
+## MSRV
+Minimum Supported Rust Version: **1.81** (defined in workspace Cargo.toml)

@@ -5,3 +5,4 @@ tmp2/*
 matchmaker-logs-*.tgz
 node_modules
 .claude/tsc-cache
+dist
