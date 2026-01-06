@@ -183,14 +183,11 @@ async fn send_cmd(args: SendArgsCli) -> anyhow::Result<()> {
 
     // Spawn progress handler
     let progress_mp = mp.clone();
-    let progress_handle = tokio::spawn(async move {
+    tokio::spawn(async move {
         handle_progress_events(progress_mp, progress_rx).await;
     });
 
     let result = sendme_lib::send_with_progress(lib_args, progress_tx).await?;
-
-    // Wait for progress handler to finish
-    progress_handle.await.ok();
 
     let entry_type = if path.is_file() { "file" } else { "directory" };
     println!(

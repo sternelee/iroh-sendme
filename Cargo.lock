@@ -429,6 +429,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
+name = "cli"
+version = "0.31.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "console",
+ "crossterm",
+ "duct",
+ "futures-lite",
+ "indicatif",
+ "iroh-blobs",
+ "libc",
+ "nix",
+ "rand 0.9.2",
+ "sendme-lib",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing-subscriber",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3187,29 +3210,6 @@ name = "send_wrapper"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
-
-[[package]]
-name = "sendme"
-version = "0.31.0"
-dependencies = [
- "anyhow",
- "clap",
- "console",
- "crossterm",
- "duct",
- "futures-lite",
- "indicatif",
- "iroh-blobs",
- "libc",
- "nix",
- "rand 0.9.2",
- "sendme-lib",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing-subscriber",
- "windows-sys 0.59.0",
-]
 
 [[package]]
 name = "sendme-app"

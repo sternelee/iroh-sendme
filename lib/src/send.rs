@@ -3,7 +3,7 @@
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use iroh::{
@@ -18,6 +18,7 @@ use iroh_blobs::{
 };
 
 use n0_future::StreamExt;
+use tokio::select;
 
 use crate::{
     get_or_create_secret, progress::*, types::*, apply_options, SendArgs, SendResult,
@@ -125,19 +126,10 @@ async fn send_internal(
             .accept(iroh_blobs::ALPN, blobs.clone())
             .spawn();
 
-        // Wait for the endpoint to figure out its address before making a ticket
-        let ep = router.endpoint();
-        tokio::time::timeout(Duration::from_secs(30), async move {
-            if !matches!(relay_mode, RelayMode::Disabled) {
-                let _ = ep.online().await;
-            }
-        })
-        .await?;
-
         anyhow::Ok((router, import_result, dt))
     };
 
-    let (router, (hash, size, collection), dt) = tokio::select! {
+    let (router, (hash, size, collection), dt) = select! {
         x = setup => x?,
         _ = tokio::signal::ctrl_c() => {
             std::process::exit(130);
@@ -149,13 +141,10 @@ async fn send_internal(
     apply_options(&mut addr, args.ticket_type);
     let ticket = iroh_blobs::ticket::BlobTicket::new(addr, hash, BlobFormat::HashSeq);
 
-    // Spawn a task to keep the router alive indefinitely
+    // Spawn a task to keep the router alive for connections
     tokio::spawn(async move {
-        // Keep the router alive until the program exits
         let _router = router;
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
+        std::future::pending::<()>().await;
     });
 
     Ok(SendResult {
