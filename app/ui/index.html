@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sendme - P2P File Transfer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 700px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 16px;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab:hover {
+            color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        input[type="file"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+            font-family: 'Courier New', monospace;
+        }
+
+        select {
+            cursor: pointer;
+            background: white;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+            white-space: pre-wrap;
+            word-break: break-all;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .result.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .result.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .result.show {
+            display: block;
+        }
+
+        .progress {
+            margin-top: 20px;
+            display: none;
+        }
+
+        .progress.show {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .progress-text {
+            margin-top: 8px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .transfers-list {
+            margin-top: 20px;
+        }
+
+        .transfer-item {
+            padding: 12px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .transfer-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .transfer-id {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .transfer-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .transfer-status.initializing {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .transfer-status.serving {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .transfer-status.completed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .transfer-status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .transfer-status.cancelled {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        .transfer-path {
+            font-size: 13px;
+            color: #333;
+            word-break: break-all;
+        }
+
+        .cancel-btn {
+            width: auto;
+            padding: 6px 12px;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Sendme</h1>
+        <p class="subtitle">P2P File Transfer with NAT Hole Punching</p>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('send')">Send</button>
+            <button class="tab" onclick="switchTab('receive')">Receive</button>
+            <button class="tab" onclick="switchTab('transfers')">Transfers</button>
+        </div>
+
+        <!-- Send Tab -->
+        <div id="send-tab" class="tab-content active">
+            <div class="form-group">
+                <label for="send-path">Select File or Directory:</label>
+                <input type="file" id="send-path" webkitdirectory directory multiple>
+            </div>
+            <div class="form-group">
+                <label for="ticket-type">Ticket Type:</label>
+                <select id="ticket-type">
+                    <option value="default">Default</option>
+                    <option value="relay">Relay Only</option>
+                    <option value="direct">Direct Only</option>
+                </select>
+            </div>
+            <button onclick="sendFile()" id="send-btn">Send File</button>
+            <div class="result" id="send-result"></div>
+        </div>
+
+        <!-- Receive Tab -->
+        <div id="receive-tab" class="tab-content">
+            <div class="form-group">
+                <label for="receive-ticket">Enter Ticket:</label>
+                <textarea id="receive-ticket" placeholder="Paste the ticket here..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="output-dir">Output Directory (Optional):</label>
+                <input type="text" id="output-dir" placeholder="Leave empty to use current directory">
+            </div>
+            <button onclick="receiveFile()" id="receive-btn">Receive File</button>
+            <div class="result" id="receive-result"></div>
+        </div>
+
+        <!-- Transfers Tab -->
+        <div id="transfers-tab" class="tab-content">
+            <button onclick="refreshTransfers()" id="refresh-btn">Refresh</button>
+            <div class="transfers-list" id="transfers-list"></div>
+        </div>
+
+        <!-- Progress -->
+        <div class="progress" id="progress">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Waiting...</div>
+        </div>
+    </div>
+
+    <script>
+        const { invoke } = window.__TAURI__.core;
+        const { listen } = window.__TAURI__.event;
+
+        let selectedPath = '';
+
+        // Listen for progress updates
+        listen('progress', (event) => {
+            console.log('Progress:', event.payload);
+            updateProgress(event.payload);
+        });
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+            if (tab === 'send') {
+                document.querySelector('.tab:nth-child(1)').classList.add('active');
+                document.getElementById('send-tab').classList.add('active');
+            } else if (tab === 'receive') {
+                document.querySelector('.tab:nth-child(2)').classList.add('active');
+                document.getElementById('receive-tab').classList.add('active');
+            } else {
+                document.querySelector('.tab:nth-child(3)').classList.add('active');
+                document.getElementById('transfers-tab').classList.add('active');
+                refreshTransfers();
+            }
+        }
+
+        async function sendFile() {
+            const btn = document.getElementById('send-btn');
+            const result = document.getElementById('send-result');
+            const pathInput = document.getElementById('send-path');
+            const ticketType = document.getElementById('ticket-type').value;
+
+            if (!pathInput.files || pathInput.files.length === 0) {
+                showResult(result, 'Please select a file or directory', 'error');
+                return;
+            }
+
+            selectedPath = pathInput.files[0].webkitRelativePath || pathInput.files[0].path;
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            showProgress(true);
+            hideResult(result);
+
+            try {
+                const response = await invoke('send_file', {
+                    request: {
+                        path: selectedPath,
+                        ticketType: ticketType
+                    }
+                });
+
+                showResult(result, `✓ File sent successfully!\n\nTransfer ID will be assigned.\n\nTicket:\n${response}`, 'success');
+                await refreshTransfers();
+            } catch (error) {
+                showResult(result, `✗ Error: ${error}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Send File';
+                showProgress(false);
+            }
+        }
+
+        async function receiveFile() {
+            const btn = document.getElementById('receive-btn');
+            const result = document.getElementById('receive-result');
+            const ticketInput = document.getElementById('receive-ticket');
+            const outputDir = document.getElementById('output-dir').value;
+
+            const ticket = ticketInput.value.trim();
+            if (!ticket) {
+                showResult(result, 'Please enter a ticket', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Receiving...';
+            showProgress(true);
+            hideResult(result);
+
+            try {
+                const response = await invoke('receive_file', {
+                    request: {
+                        ticket: ticket,
+                        outputDir: outputDir || null
+                    }
+                });
+
+                const data = JSON.parse(response);
+                showResult(result, `✓ File received successfully!\n\nTransfer ID: ${data.transfer_id}\nFiles: ${data.files}\nBytes: ${data.bytes}`, 'success');
+                await refreshTransfers();
+            } catch (error) {
+                showResult(result, `✗ Error: ${error}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Receive File';
+                showProgress(false);
+            }
+        }
+
+        async function cancelTransfer(id) {
+            try {
+                await invoke('cancel_transfer', { id: id });
+                await refreshTransfers();
+            } catch (error) {
+                alert(`Failed to cancel transfer: ${error}`);
+            }
+        }
+
+        async function refreshTransfers() {
+            const listEl = document.getElementById('transfers-list');
+            listEl.innerHTML = '<p style="color: #999; text-align: center;">Loading...</p>';
+
+            try {
+                const transfers = await invoke('get_transfers');
+
+                if (transfers.length === 0) {
+                    listEl.innerHTML = '<p style="color: #999; text-align: center;">No transfers yet</p>';
+                    return;
+                }
+
+                listEl.innerHTML = transfers.map(t => `
+                    <div class="transfer-item">
+                        <div class="transfer-item-header">
+                            <div>
+                                <div class="transfer-id">ID: ${t.id.substring(0, 8)}...</div>
+                                <div class="transfer-path">${escapeHtml(t.path)}</div>
+                            </div>
+                            <span class="transfer-status ${t.status.toLowerCase()}">${t.status}</span>
+                        </div>
+                        ${t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'error' ?
+                            `<button class="cancel-btn" onclick="cancelTransfer('${t.id}')">Cancel</button>` : ''
+                        }
+                    </div>
+                `).join('');
+            } catch (error) {
+                listEl.innerHTML = `<p style="color: #721c24; text-align: center;">Error: ${error}</p>`;
+            }
+        }
+
+        function showResult(element, message, type) {
+            element.textContent = message;
+            element.className = `result ${type} show`;
+        }
+
+        function hideResult(element) {
+            element.className = 'result';
+        }
+
+        function showProgress(show) {
+            const progress = document.getElementById('progress');
+            if (show) {
+                progress.classList.add('show');
+            } else {
+                progress.classList.remove('show');
+            }
+        }
+
+        function updateProgress(data) {
+            const fill = document.getElementById('progress-fill');
+            const text = document.getElementById('progress-text');
+
+            const transferId = data.data.transfer_id || 'unknown';
+
+            if (data.event_type === 'download') {
+                const progress = data.data.progress;
+                if (progress.type === 'downloading') {
+                    const current = progress.offset || 0;
+                    const total = progress.total || 1;
+                    const percentage = Math.min(100, Math.max(0, (current / total) * 100));
+                    fill.style.width = `${percentage}%`;
+                    text.textContent = `Downloading (${transferId}): ${percentage.toFixed(1)}%`;
+                } else if (progress.type === 'connecting') {
+                    text.textContent = `Connecting (${transferId})...`;
+                } else if (progress.type === 'getting_sizes') {
+                    text.textContent = `Getting file sizes (${transferId})...`;
+                } else if (progress.type === 'completed') {
+                    fill.style.width = '100%';
+                    text.textContent = `Download completed (${transferId})`;
+                }
+            } else if (data.event_type === 'export') {
+                const progress = data.data.progress;
+                if (progress.type === 'file_progress') {
+                    text.textContent = `Exporting (${transferId}): ${progress.name}`;
+                } else if (progress.type === 'file_completed') {
+                    text.textContent = `Exported: ${progress.name}`;
+                } else if (progress.type === 'completed') {
+                    fill.style.width = '100%';
+                    text.textContent = `Export completed (${transferId})`;
+                }
+            } else if (data.event_type === 'import') {
+                const progress = data.data.progress;
+                if (progress.type === 'file_progress') {
+                    text.textContent = `Importing (${transferId}): ${progress.name}`;
+                } else if (progress.type === 'file_completed') {
+                    text.textContent = `Imported: ${progress.name}`;
+                } else if (progress.type === 'started') {
+                    text.textContent = `Starting import (${transferId}): ${progress.total_files} files`;
+                } else if (progress.type === 'completed') {
+                    text.textContent = `Import completed (${transferId})`;
+                }
+            } else if (data.event_type === 'connection') {
+                text.textContent = `Connection (${transferId}): ${data.data.status}`;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Auto-refresh transfers every 2 seconds when on transfers tab
+        setInterval(() => {
+            const transfersTab = document.getElementById('transfers-tab');
+            if (transfersTab && transfersTab.classList.contains('active')) {
+                refreshTransfers();
+            }
+        }, 2000);
+    </script>
+</body>
+</html>
