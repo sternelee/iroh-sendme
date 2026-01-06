@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    io::{self, Write},
     net::{SocketAddrV4, SocketAddrV6},
     path::PathBuf,
     sync::Arc,
@@ -10,7 +11,6 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use console::style;
-use futures_lite::stream::StreamExt;
 use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle,
 };
@@ -20,10 +20,7 @@ use sendme_lib::{progress::*, types::*};
 
 // Clipboard support (optional)
 #[cfg(feature = "clipboard")]
-use crossterm::{
-    event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    terminal::{disable_raw_mode, enable_raw_mode},
-};
+use crossterm::clipboard::CopyToClipboard;
 
 /// Send a file or directory between two machines, using blake3 verified streaming.
 #[derive(Parser, Debug)]
@@ -86,7 +83,8 @@ impl From<CommonArgsCli> for CommonConfig {
 #[derive(Parser, Debug, Clone)]
 pub struct SendArgsCli {
     /// Path to the file or directory to send.
-    pub path: PathBuf,
+    #[clap(required = false)]
+    pub path: Option<PathBuf>,
 
     /// What type of ticket to use.
     #[clap(long, default_value_t = AddrInfoOptions::RelayAndAddresses)]
@@ -101,31 +99,42 @@ pub struct SendArgsCli {
     pub clipboard: bool,
 }
 
-impl From<SendArgsCli> for SendArgs {
-    fn from(args: SendArgsCli) -> Self {
-        Self {
-            path: args.path,
+impl TryFrom<SendArgsCli> for SendArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: SendArgsCli) -> Result<Self, Self::Error> {
+        let path = args
+            .path
+            .ok_or_else(|| anyhow::anyhow!("Path is required"))?;
+        Ok(Self {
+            path,
             ticket_type: args.ticket_type,
             common: args.common.into(),
-        }
+        })
     }
 }
 
 #[derive(Parser, Debug, Clone)]
 pub struct ReceiveArgsCli {
     /// The ticket to use to connect to the sender.
-    pub ticket: sendme_lib::BlobTicket,
+    #[clap(required = false)]
+    pub ticket: Option<sendme_lib::BlobTicket>,
 
     #[clap(flatten)]
     pub common: CommonArgsCli,
 }
 
-impl From<ReceiveArgsCli> for ReceiveArgs {
-    fn from(args: ReceiveArgsCli) -> Self {
-        Self {
-            ticket: args.ticket,
+impl TryFrom<ReceiveArgsCli> for ReceiveArgs {
+    type Error = anyhow::Error;
+
+    fn try_from(args: ReceiveArgsCli) -> Result<Self, Self::Error> {
+        let ticket = args
+            .ticket
+            .ok_or_else(|| anyhow::anyhow!("Ticket is required"))?;
+        Ok(Self {
+            ticket,
             common: args.common.into(),
-        }
+        })
     }
 }
 
@@ -133,6 +142,69 @@ fn print_hash(hash: &sendme_lib::Hash, format: Format) -> String {
     match format {
         Format::Hex => hash.to_hex().to_string(),
         Format::Cid => hash.to_string(),
+    }
+}
+
+/// Read a line from stdin with a prompt.
+fn read_line(prompt: &str) -> io::Result<String> {
+    print!("{}", prompt);
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
+}
+
+/// Asynchronously read a line from stdin with Ctrl+C support.
+async fn read_line_async(prompt: &str) -> io::Result<Option<String>> {
+    let prompt = prompt.to_string();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            println!("\nExiting...");
+            Ok(None)
+        }
+        result = tokio::task::spawn_blocking(move || read_line(&prompt)) => {
+            Ok(Some(result.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??))
+        }
+    }
+}
+
+/// Read a file path from stdin with a prompt.
+fn read_path(prompt: &str) -> io::Result<PathBuf> {
+    loop {
+        let input = read_line(prompt)?;
+        if input.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Path cannot be empty",
+            ));
+        }
+        let path = PathBuf::from(&input);
+        if path.exists() {
+            return Ok(path);
+        }
+        eprintln!("Error: Path '{}' does not exist. Please try again.", input);
+    }
+}
+
+/// Asynchronously read a file path from stdin with Ctrl+C support.
+async fn read_path_async(prompt: &str) -> io::Result<Option<PathBuf>> {
+    let prompt = prompt.to_string();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            println!("\nExiting...");
+            Ok(None)
+        }
+        result = tokio::task::spawn_blocking(move || read_path(&prompt)) => {
+            match result.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))? {
+                Ok(p) => Ok(Some(p)),
+                Err(e) if e.kind() == io::ErrorKind::InvalidInput => {
+                    // Empty input, continue loop
+                    Ok(None)
+                }
+                Err(e) => Err(e),
+            }
+        }
     }
 }
 
@@ -166,10 +238,45 @@ async fn send_cmd(args: SendArgsCli) -> anyhow::Result<()> {
     let show_progress = !args.common.no_progress;
     let verbose = args.common.verbose;
     let format = args.common.format;
-    let path = args.path.clone();
     let clipboard = args.clipboard;
 
-    let lib_args: SendArgs = args.into();
+    // If no path provided, enter interactive mode
+    if args.path.is_none() {
+        println!("=== Sendme Interactive Send Mode ===");
+        println!("Enter file or directory paths to send, or press Ctrl+C to exit\n");
+        loop {
+            match read_path_async("Enter path to send> ").await? {
+                Some(path) => {
+                    let mut send_args = args.clone();
+                    send_args.path = Some(path.clone());
+
+                    if let Err(e) =
+                        send_single_file(send_args, show_progress, verbose, format, clipboard).await
+                    {
+                        eprintln!("Error sending file: {e}");
+                    }
+
+                    println!();
+                }
+                None => break, // Ctrl+C pressed
+            }
+        }
+        Ok(())
+    } else {
+        // Single send mode
+        send_single_file(args, show_progress, verbose, format, clipboard).await
+    }
+}
+
+async fn send_single_file(
+    args: SendArgsCli,
+    show_progress: bool,
+    verbose: u8,
+    format: Format,
+    clipboard: bool,
+) -> anyhow::Result<()> {
+    let path = args.path.clone().unwrap();
+    let lib_args: SendArgs = args.try_into()?;
 
     let mp = Arc::new(MultiProgress::new());
     let draw_target = if show_progress {
@@ -191,7 +298,7 @@ async fn send_cmd(args: SendArgsCli) -> anyhow::Result<()> {
 
     let entry_type = if path.is_file() { "file" } else { "directory" };
     println!(
-        "imported {} {}, {}, hash {}",
+        "\n✓ Imported {} {}, {}, hash {}",
         entry_type,
         path.display(),
         HumanBytes(result.total_size),
@@ -211,16 +318,17 @@ async fn send_cmd(args: SendArgsCli) -> anyhow::Result<()> {
         );
     }
 
-    println!("to get this data, use");
-    println!("sendme receive {}", result.ticket);
+    println!("To get this data, use:");
+    println!("  sendme receive {}", result.ticket);
 
     #[cfg(feature = "clipboard")]
     if clipboard {
         add_to_clipboard(&result.ticket);
-        handle_key_press(result.ticket);
     }
 
-    println!("Press Ctrl+C to exit");
+    println!("\nWaiting for incoming connections... (Press Ctrl+C to stop serving)");
+
+    // Keep the send task alive
     tokio::signal::ctrl_c().await?;
 
     Ok(())
@@ -230,7 +338,52 @@ async fn receive_cmd(args: ReceiveArgsCli) -> anyhow::Result<()> {
     let show_progress = !args.common.no_progress;
     let verbose = args.common.verbose;
 
-    let lib_args: ReceiveArgs = args.into();
+    // If no ticket provided, enter interactive mode
+    if args.ticket.is_none() {
+        println!("=== Sendme Interactive Receive Mode ===");
+        println!("Enter tickets to receive files, or press Ctrl+C to exit\n");
+        loop {
+            match read_line_async("Enter ticket> ").await? {
+                Some(ticket_str) => {
+                    if ticket_str.is_empty() {
+                        eprintln!("Ticket cannot be empty. Please try again.");
+                        continue;
+                    }
+
+                    let ticket = match ticket_str.parse::<sendme_lib::BlobTicket>() {
+                        Ok(t) => t,
+                        Err(e) => {
+                            eprintln!("Error parsing ticket: {e}. Please try again.");
+                            continue;
+                        }
+                    };
+
+                    let mut receive_args = args.clone();
+                    receive_args.ticket = Some(ticket);
+
+                    if let Err(e) = receive_single_file(receive_args, show_progress, verbose).await
+                    {
+                        eprintln!("Error receiving file: {e}");
+                    }
+
+                    println!();
+                }
+                None => break, // Ctrl+C pressed
+            }
+        }
+        Ok(())
+    } else {
+        // Single receive mode
+        receive_single_file(args, show_progress, verbose).await
+    }
+}
+
+async fn receive_single_file(
+    args: ReceiveArgsCli,
+    show_progress: bool,
+    verbose: u8,
+) -> anyhow::Result<()> {
+    let lib_args: ReceiveArgs = args.try_into()?;
 
     let mp = Arc::new(MultiProgress::new());
     let draw_target = if show_progress {
@@ -255,13 +408,13 @@ async fn receive_cmd(args: ReceiveArgsCli) -> anyhow::Result<()> {
 
     if let Some((name, _)) = result.collection.iter().next() {
         if let Some(first) = name.split('/').next() {
-            println!("exporting to {first}");
+            println!("✓ Exported to {first}");
         }
     }
 
     if verbose > 0 {
         println!(
-            "downloaded {} files, {}. took {} ({}/s)",
+            "Downloaded {} files, {}. Took {} ({}/s)",
             result.total_files,
             HumanBytes(result.payload_size),
             HumanDuration(result.stats.elapsed),
@@ -276,10 +429,7 @@ async fn receive_cmd(args: ReceiveArgsCli) -> anyhow::Result<()> {
 }
 
 /// Handle progress events from the library and update progress bars.
-async fn handle_progress_events(
-    mp: Arc<MultiProgress>,
-    mut recv: mpsc::Receiver<ProgressEvent>,
-) {
+async fn handle_progress_events(mp: Arc<MultiProgress>, mut recv: mpsc::Receiver<ProgressEvent>) {
     use std::collections::HashMap;
 
     let mut import_bars: HashMap<String, ProgressBar> = HashMap::new();
@@ -570,75 +720,12 @@ fn make_transfer_progress() -> ProgressBar {
 // Clipboard functions (only when feature is enabled)
 #[cfg(feature = "clipboard")]
 fn add_to_clipboard(ticket: &sendme_lib::BlobTicket) {
+    use crossterm::execute;
     use std::io::stdout;
-    use crossterm::{clipboard::CopyToClipboard, execute};
 
     execute!(
         stdout(),
         CopyToClipboard::to_clipboard_from(format!("sendme receive {ticket}"))
     )
     .unwrap_or_else(|e| eprintln!("Failed to copy to clipboard: {e}"));
-}
-
-#[cfg(feature = "clipboard")]
-fn handle_key_press(ticket: sendme_lib::BlobTicket) {
-    use std::io;
-
-    #[cfg(unix)]
-    use libc::{raise, SIGINT};
-    #[cfg(windows)]
-    use windows_sys::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_C_EVENT};
-
-    let ticket_str = format!("sendme receive {ticket}");
-
-    let _keyboard = tokio::task::spawn(async move {
-        println!("press c to copy command to clipboard");
-
-        enable_raw_mode().unwrap_or_else(|err| eprintln!("Failed to enable raw mode: {err}"));
-        EventStream::new()
-            .for_each(move |e| match e {
-                Err(err) => eprintln!("Failed to process event: {err}"),
-                Ok(Event::Key(KeyEvent {
-                    code: KeyCode::Char('c'),
-                    modifiers: KeyModifiers::NONE,
-                    kind: KeyEventKind::Press,
-                    ..
-                })) => {
-                    use std::io::stdout;
-                    use crossterm::{clipboard::CopyToClipboard, execute};
-                    execute!(
-                        stdout(),
-                        CopyToClipboard::to_clipboard_from(ticket_str.clone())
-                    )
-                    .unwrap_or_else(|e| eprintln!("Failed to copy to clipboard: {e}"));
-                }
-                Ok(Event::Key(KeyEvent {
-                    code: KeyCode::Char('c'),
-                    modifiers: KeyModifiers::CONTROL,
-                    kind: KeyEventKind::Press,
-                    ..
-                })) => {
-                    disable_raw_mode()
-                        .unwrap_or_else(|e| eprintln!("Failed to disable raw mode: {e}"));
-
-                    #[cfg(unix)]
-                    if unsafe { raise(SIGINT) } != 0 {
-                        eprintln!(
-                            "Failed to raise signal: {}",
-                            io::Error::last_os_error()
-                        );
-                    }
-
-                    #[cfg(windows)]
-                    if unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) } == 0 {
-                        eprintln!(
-                            "Failed to generate console event: {}",
-                            io::Error::last_os_error()
-                        );
-                    }
-                }
-                _ => {}
-            })
-            .await
-    });
 }
