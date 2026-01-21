@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "example-with-tailwindcss",
+  "compatibility_date": "2026-01-16",
+  "observability": {
+    "enabled": true
+  },
+  "main": "./.output/server/index.mjs",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./.output/public"
+  }
+}
