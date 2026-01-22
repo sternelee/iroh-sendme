@@ -3,39 +3,37 @@
   "name": "sendme-browser-app",
   "compatibility_date": "2026-01-16",
   "observability": {
-    "enabled": true
+    "enabled": true,
   },
   "main": "./.output/server/index.mjs",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "binding": "ASSETS",
-    "directory": "./.output/public"
+    "directory": "./.output/public",
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "sendme-browser-db",
       "database_id": "local",
-      "migrations_dir": "./migrations"
-    }
+      "migrations_dir": "./drizzle",
+    },
   ],
   "vars": {
     "BETTER_AUTH_URL": "http://localhost:8788",
     "BETTER_AUTH_APP_URL": "http://localhost:8788",
-    "BETTER_AUTH_SECRET": "dev-secret-change-in-production"
+    "BETTER_AUTH_SECRET": "dev-secret-change-in-production",
   },
   "env": {
     "production": {
       "vars": {
         "BETTER_AUTH_URL": "https://your-domain.example",
         "BETTER_AUTH_APP_URL": "https://your-domain.example",
-        "BETTER_AUTH_SECRET": "CHANGE_ME_IN_PRODUCTION"
-      }
-    }
+        "BETTER_AUTH_SECRET": "CHANGE_ME_IN_PRODUCTION",
+      },
+    },
   },
   "dev": {
-    "port": 8788
-  }
+    "port": 8788,
+  },
 }
