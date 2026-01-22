@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "sendme-db",
-      "database_id": "local",
+      "database_id": "4419bd4c-8798-4ff3-b2ca-6d4ea3345be9",
       "migrations_dir": "./drizzle",
     },
   ],
@@ -27,9 +27,9 @@
   "env": {
     "production": {
       "vars": {
-        "BETTER_AUTH_URL": "https://your-domain.example",
-        "BETTER_AUTH_APP_URL": "https://your-domain.example",
-        "BETTER_AUTH_SECRET": "CHANGE_ME_IN_PRODUCTION",
+        "BETTER_AUTH_URL": "https://sendme.leeapp.dev",
+        "BETTER_AUTH_APP_URL": "https://sendme.leeapp.dev",
+        "BETTER_AUTH_SECRET": "123456789",
       },
     },
   },
