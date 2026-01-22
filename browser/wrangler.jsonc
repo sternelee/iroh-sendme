@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sendme-browser-app",
+  "name": "sendme-app",
   "compatibility_date": "2026-01-16",
   "observability": {
     "enabled": true,
@@ -14,7 +14,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "sendme-browser-db",
+      "database_name": "sendme-db",
       "database_id": "local",
       "migrations_dir": "./drizzle",
     },
